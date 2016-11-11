@@ -1,0 +1,179 @@
+---
+title: "Practical Machine Learning course project"
+author: "Emanuele Melegari"
+date: "9 November 2016"
+output: html_document
+---
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+The goal of this project is to predict the manner in which they did the exercise. This is the ```classe``` variable in the training set, considering any of the other variables as predictors.
+
+##The approach
+The outcome variable is the ```classe```, a factor variable of ```5``` levels:
+
+* A - exactly according to the specification
+* B - throwing the elbows to the front
+* C - lifting the dumbbell only halfway
+* D - lowering the dumbbell only halfway
+* E - throwing the hips to the front
+
+Classe ***A*** corresponds to the specified execution of the exercise the 10 people have been asked, while the other classes correspond to common mistakes. 
+All other variables in the data set will be used as predictor, after cleaning.
+
+Models evaluation will be based on maximising the accuracy and minimazing the out of sample error. We will build two different models, using decision tree and random forests methods. The model with the highest accuracy will be choosen as the final Model and will be validated on the original testing data set.
+
+To be able to test the final chosen model, we need to train and test the models first, therefore we will subset the training dataset as follow:
+
+* subtraing data set, as ```70%``` of the original training data set
+* subtesting data set, as ```30%``` of the original training data set
+
+
+We will fit the model using the subtraining data set and test it on the subtesting data set. Once the best model is choosed, it will be validated on the original testing data set.
+
+The expected out of sample error will correpond to the ***accuracy*** in the cross-validation data. 
+Accuracy is the proportion between the correctly classified observation over the total observation in the subtraining set used for testing the model.
+Expected Accurracy is the accuracy in the out of sample data set, i.e. the original testing data set.
+The ***expected out of sample error*** will then correspond to the proportion between the missclassified observation over the total observation in the original testing data set.
+
+##Load necessary packages
+The following packages are required:
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(RColorBrewer)
+library(rattle)
+library(rpart.plot)
+```
+
+In order to ensure reproducibility of the analysis, we will set the seed to 1980
+```{r}
+set.seed(1980)
+```
+
+##Data Gathering, Partitioning and cleaning
+
+***Data gathering:*** download the data from the provided URL
+```{r, cache=TRUE}
+##training data set
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+##testing data set
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+##load the training data
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+##load the testing data
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+***Data Partioning:*** as we want to be able to test our chosen model at the end on fresh data, we split the training data set into two subsamples, the ```70%``` will be used as subtraining set and the remaining ```30%``` will be used as subtesting set. In this way we have the original testing data for final testing our model.
+
+```{r}
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+subTraining <- training[inTrain, ]
+subTesting <- training[-inTrain, ]
+dim(subTraining)
+dim(subTesting)
+```
+
+***Data Cleaning:*** 
+
+- Remove first columns as they are metadata not relevant for prediction
+
+```{r}
+subTraining <- subTraining[, -c(1:7)]
+```
+
+- Remove all the records where the variance of their variables is close to 0. 
+```{r}
+##clean near zero variance variables
+NearZeroVar <- nearZeroVar(subTraining, saveMetrics = TRUE)
+subTraining <- subTraining[, NearZeroVar$nzv == FALSE]
+```
+
+- Remove all variables that have more than ```60%``` of ```NA``` values
+```{r}
+##create a cope of the original training data set
+##scan each variable whichhas more than 60% of NA
+##Select tha variable from the duplicated dataset and remove it
+##Overwrite the original dataset with the new one
+subTraining_tmp <- subTraining
+for (i in 1:length(subTraining)){
+    if(sum(is.na(subTraining[, i]))/ nrow(subTraining) >= .6) {
+        for (j in 1:length(subTraining_tmp)){
+            if(length(grep(names(subTraining[i]), names(subTraining_tmp)[j])) == 1){
+                subTraining_tmp <- subTraining_tmp[, -j]
+            }
+        }
+    }
+}
+
+subTraining <- subTraining_tmp
+```
+
+We then apply the same approach on the Testing dataset by keeping only the selected variables
+```{r}
+##clean the subtesting data set
+SelectedVariables <- colnames(subTraining)
+subTesting <- subTesting[SelectedVariables]
+
+##clean the testing data set
+## we need to remove variable classe from the subtraining as we don't have it in testing dataset
+SelectedVariables <- colnames(subTraining[, -53])
+testing <- testing[SelectedVariables]
+```
+
+##Random Forests
+The first model will be created using the Random Forest, which we will train with the ```70%``` of the traing data and test it with the remaing ```30%``` of the training data (which we called subTesting) 
+
+All other variables are used to predict variable ```Classe```. 
+```{r}
+##create the model with randomForest function
+modFit_rf <- randomForest(classe ~., data = subTraining)
+
+##calculate predicted values 
+pred_rf <- predict(modFit_rf, subTesting)
+
+##calculate confusion matrix
+cm_rf <- confusionMatrix(pred_rf, subTesting$classe)
+print(cm_rf)
+```
+
+Accuracy of the model is `r round(cm_rf[[3]][[1]],2)*100`%, which means the expected out of sample error is `r round(1-cm_rf[[3]][[1]],2)*100`%.
+
+We then calculate the error for each tree created by the model
+```{r}
+plot(modFit_rf)
+```
+
+Error rate is always below ```14%``` for all the ```500``` trees.
+
+##Decision Tree
+The first model will be created using the Random Forest, which we will train with the ```70%``` of the traing data and test it with the remaing ```30%``` of the training data (which we called subTesting) 
+
+```{r}
+modFit_dt <- rpart(classe ~., data = subTraining, method = "class")
+
+##calculate predicted values
+pred_dt <- predict(modFit_dt, subTesting, type = "class")
+
+##calculate the confusion matrix
+cm_dt <- confusionMatrix(pred_dt, subTesting$classe)
+print(cm_dt)
+```
+
+Accuracy of the model is ```68%```, much lower compared to the first model built. The expected out of sample error is ```32%```.
+
+##Final Prediction
+The Random Forest model is the one that gave us the higher accuracy therefore we apply this one on the final testing data
+```{r}
+finalPred <- predict(modFit_rf, testing, type = "class")
+print(finalPred)
+```
+
+##Conclustions
+
+Between the two chosen Machine Learning algorithm we have seen that, for the given data, the Random Forest is the one that has given the more accurate data in predicting the quality level of the executed excercise.
